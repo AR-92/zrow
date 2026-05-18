@@ -101,6 +101,27 @@ INSERT INTO order_items (order_id, product_id, quantity, unit_price) VALUES
   (10, 8, 1, 49.99),
   (11, 2, 1, 34.99), (11, 5, 1, 89.99), (11, 10, 1, 34.99),
   (12, 1, 1, 89.99);
+
+CREATE TABLE reviews (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  product_id INTEGER NOT NULL REFERENCES products(id),
+  user_id INTEGER NOT NULL REFERENCES users(id),
+  rating INTEGER NOT NULL CHECK(rating >= 1 AND rating <= 5),
+  title TEXT,
+  comment TEXT,
+  created_at TEXT DEFAULT (datetime('now'))
+);
+
+INSERT INTO reviews (product_id, user_id, rating, title, comment) VALUES
+  (1, 2, 5, 'Amazing sound quality', 'Best headphones I have ever owned. The noise cancellation is incredible.'),
+  (1, 5, 4, 'Great battery life', 'Lasts the full 30 hours as advertised. Sound is crisp and clear.'),
+  (3, 1, 5, 'Perfect for coding', 'Cherry MX switches feel amazing. The RGB is a nice bonus.'),
+  (3, 6, 3, 'Too loud', 'Great keyboard but the switches are too loud for an open office.'),
+  (5, 3, 5, 'Classic fit', 'The denim is high quality and the fit is perfect. True to size.'),
+  (7, 4, 4, 'Must read', 'Every developer should read this book. Fundamental concepts explained clearly.'),
+  (8, 7, 5, 'The bible of distributed systems', 'Kleppmann is a genius. This book changed how I think about data.'),
+  (10, 2, 4, 'Thriving', 'All 5 plants arrived healthy and are doing great a month later.'),
+  (12, 8, 5, 'So warm and soft', 'This blanket is incredibly cozy. Best purchase this winter.');
 `;
 
 export const SAMPLE_QUERIES = {
@@ -163,6 +184,14 @@ ORDER BY revenue DESC;`,
   END AS stock_level
 FROM products
 ORDER BY stock ASC;`,
+
+  'Product reviews with avg rating': `SELECT
+    p.name,
+    COUNT(r.id) AS review_count,
+    AVG(r.rating) AS avg_rating
+FROM products p
+LEFT JOIN reviews r ON p.id = r.product_id
+GROUP BY p.id;`,
 };
 
 export function seedDatabase(db, sqlExecutor) {

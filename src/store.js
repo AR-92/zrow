@@ -1,43 +1,15 @@
 import { createStore } from 'ztore';
-
-const DEFAULT_DDL = `CREATE TABLE users (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  email TEXT UNIQUE NOT NULL,
-  role TEXT DEFAULT 'user',
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE projects (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  name TEXT NOT NULL,
-  description TEXT,
-  owner_id INTEGER,
-  FOREIGN KEY (owner_id) REFERENCES users(id)
-);`;
-
-const DEFAULT_DML = `-- Sample query: select users
-SELECT u.id, u.name, u.email, u.role, COUNT(p.id) as project_count
-FROM users u
-LEFT JOIN projects p ON p.owner_id = u.id
-WHERE u.role = 'user'
-GROUP BY u.id, u.name, u.email, u.role
-HAVING COUNT(p.id) > 0
-ORDER BY u.name ASC
-LIMIT 10;`;
+import { SQLite } from './adapters/sqljs.js';
 
 function loadConnections() {
-  try {
-    return JSON.parse(localStorage.getItem('zrow_connections') || '[]');
-  } catch { return []; }
+  try { return JSON.parse(localStorage.getItem('zrow_connections') || '[]'); } catch { return []; }
+}
+function saveConnections(c) {
+  localStorage.setItem('zrow_connections', JSON.stringify(c));
 }
 
-function saveConnections(connections) {
-  localStorage.setItem('zrow_connections', JSON.stringify(connections));
-}
-
-let tabIdCounter = Date.now();
-function nextTabId() { return ++tabIdCounter; }
+let tabId = Date.now();
+function nextId() { return ++tabId; }
 
 const initialState = {
   theme: localStorage.getItem('zrow_theme') || 'dark',
@@ -50,9 +22,11 @@ const initialState = {
   queryRunning: false,
   queryError: null,
   tables: [],
+  currentTable: null,
   currentTableData: null,
-  connectionModalOpen: false,
-  editingConnection: null,
+  currentTableInfo: null,
+  sidebarView: 'tables',
+  recordCount: null,
 };
 
 export const store = createStore(initialState);
@@ -68,7 +42,9 @@ export const actions = {
   addConnection(conn) {
     const { connections } = store.get();
     const id = conn.id || 'conn_' + Date.now();
-    const updated = conn.id ? connections.map(c => c.id === conn.id ? { ...conn } : c) : [...connections, { ...conn, id }];
+    const updated = conn.id
+      ? connections.map(c => c.id === conn.id ? { ...conn } : c)
+      : [...connections, { ...conn, id }];
     store.setKey('connections', updated);
     saveConnections(updated);
     return id;
@@ -79,44 +55,26 @@ export const actions = {
     const updated = connections.filter(c => c.id !== id);
     store.setKey('connections', updated);
     saveConnections(updated);
-    const newTabs = tabs.filter(t => t.connectionId !== id);
-    store.setKey('tabs', newTabs);
+    store.setKey('tabs', tabs.filter(t => t.connectionId !== id));
     if (activeConnectionId === id) {
       store.setKey('activeConnectionId', null);
       store.setKey('tables', []);
-    }
-    if (newTabs.length === 0) {
-      store.setKey('activeTabId', null);
-    } else if (!newTabs.find(t => t.id === store.get().activeTabId)) {
-      store.setKey('activeTabId', newTabs[0].id);
+      store.setKey('currentTable', null);
+      store.setKey('currentTableData', null);
     }
   },
 
-  setActiveConnection(id) {
-    store.setKey('activeConnectionId', id);
-  },
-
-  openConnectionModal(connection = null) {
-    store.setKey('editingConnection', connection);
-    store.setKey('connectionModalOpen', true);
-  },
-
-  closeConnectionModal() {
-    store.setKey('editingConnection', null);
-    store.setKey('connectionModalOpen', false);
-  },
+  setActiveConnection(id) { store.setKey('activeConnectionId', id); },
 
   addTab(type = 'editor', opts = {}) {
     const { tabs, activeConnectionId } = store.get();
-    const id = nextTabId();
+    const id = nextId();
     const tab = {
-      id,
-      type,
-      name: opts.name || (type === 'editor' ? `Query ${tabs.filter(t => t.type === 'editor').length + 1}` : 'Table'),
+      id, type,
+      name: opts.name || (type === 'editor' ? `Query ${tabs.filter(t => t.type === 'editor').length + 1}` : opts.tableName || 'Table'),
       connectionId: opts.connectionId || activeConnectionId,
       sql: opts.sql || '',
       tableName: opts.tableName || null,
-      dirty: false,
     };
     store.setKey('tabs', [...tabs, tab]);
     store.setKey('activeTabId', id);
@@ -130,44 +88,26 @@ export const actions = {
     store.setKey('tabs', updated);
     if (activeTabId === id) {
       const newIdx = Math.min(idx, updated.length - 1);
-      store.setKey('activeTabId', updated.length > 0 ? updated[Math.max(0, newIdx)].id : null);
+      store.setKey('activeTabId', updated.length ? updated[Math.max(0, newIdx)].id : null);
     }
   },
 
-  setActiveTab(id) {
-    store.setKey('activeTabId', id);
-  },
+  setActiveTab(id) { store.setKey('activeTabId', id); },
 
   updateTabSQL(id, sql) {
-    const { tabs } = store.get();
-    store.setKey('tabs', tabs.map(t => t.id === id ? { ...t, sql, dirty: true } : t));
+    store.setKey('tabs', store.get().tabs.map(t => t.id === id ? { ...t, sql } : t));
   },
 
-  setStatus(text) {
-    store.setKey('statusText', text);
-  },
-
-  setResults(results) {
-    store.setKey('results', results);
-    store.setKey('queryError', null);
-  },
-
-  setQueryError(error) {
-    store.setKey('queryError', error);
-    store.setKey('results', null);
-  },
-
-  setQueryRunning(running) {
-    store.setKey('queryRunning', running);
-  },
-
-  setTables(tables) {
-    store.setKey('tables', tables);
-  },
-
-  setCurrentTableData(data) {
-    store.setKey('currentTableData', data);
-  },
+  setStatus(text) { store.setKey('statusText', text); },
+  setResults(r) { store.setKey('results', r); store.setKey('queryError', null); },
+  setQueryError(e) { store.setKey('queryError', e); store.setKey('results', null); },
+  setQueryRunning(b) { store.setKey('queryRunning', b); },
+  setTables(t) { store.setKey('tables', t); },
+  setCurrentTable(t) { store.setKey('currentTable', t); },
+  setCurrentTableData(d) { store.setKey('currentTableData', d); },
+  setCurrentTableInfo(i) { store.setKey('currentTableInfo', i); },
+  setSidebarView(v) { store.setKey('sidebarView', v); },
+  setRecordCount(n) { store.setKey('recordCount', n); },
 };
 
 export function getActiveTab() {
@@ -180,41 +120,40 @@ export function getActiveConnection() {
   return connections.find(c => c.id === activeConnectionId) || null;
 }
 
-let _adapterCache = {};
+let _db = null;
 
-export async function connectToDatabase(connection) {
-  const { getAdapterForType, connectAdapter } = await import('./adapters/registry.js');
-  const adapter = getAdapterForType(connection.type);
-  if (!adapter) throw new Error(`Unknown database type: ${connection.type}`);
-  const conn = await connectAdapter(adapter, connection);
-  _adapterCache[connection.id] = conn;
-  store.setKey('activeConnectionId', connection.id);
-  const tables = await conn.getTables();
-  store.setKey('tables', tables);
-  store.setKey('statusText', `Connected to ${connection.name}`);
-  return conn;
+export function getDB() { return _db; }
+
+export async function connectToDatabase(conn) {
+  const db = new SQLite();
+  await db.open(conn.database || conn.name, conn.wasmPath);
+  if (conn.seed !== false) db.seedIfEmpty();
+  _db = db;
+  store.setKey('activeConnectionId', conn.id);
+  store.setKey('tables', db.getTables());
+  store.setKey('statusText', `Connected — ${conn.name}`);
+  return db;
 }
 
-export async function disconnectDatabase(connectionId) {
-  const conn = _adapterCache[connectionId];
-  if (conn && conn.disconnect) await conn.disconnect();
-  delete _adapterCache[connectionId];
-  if (store.get().activeConnectionId === connectionId) {
-    store.setKey('activeConnectionId', null);
-    store.setKey('tables', []);
-  }
+export async function disconnectDatabase() {
+  if (_db) await _db.save();
+  _db = null;
+  store.setKey('activeConnectionId', null);
+  store.setKey('tables', []);
+  store.setKey('currentTable', null);
+  store.setKey('currentTableData', null);
+  store.setKey('currentTableInfo', null);
 }
 
-export async function executeQuery(connectionId, sql) {
-  const conn = _adapterCache[connectionId];
-  if (!conn) throw new Error('Not connected');
+export async function executeQuery(sql) {
+  if (!_db) throw new Error('Not connected');
   store.setKey('queryRunning', true);
   store.setKey('queryError', null);
   try {
-    const result = await conn.query(sql);
+    const result = _db.exec(sql);
     store.setKey('results', result);
     store.setKey('queryRunning', false);
-    store.setKey('statusText', `Query returned ${result.rows.length} rows in ${result.duration}ms`);
+    store.setKey('statusText', `${result.rows.length} rows in ${result.duration}ms`);
     return result;
   } catch (err) {
     store.setKey('queryError', err.message);
@@ -224,6 +163,14 @@ export async function executeQuery(connectionId, sql) {
   }
 }
 
-export function getConnectedAdapter(connectionId) {
-  return _adapterCache[connectionId] || null;
+export async function browseTable(name) {
+  if (!_db) return;
+  try {
+    const data = _db.getTableData(name);
+    const info = _db.getTableInfo(name);
+    store.setKey('currentTable', name);
+    store.setKey('currentTableData', data);
+    store.setKey('currentTableInfo', info);
+    store.setKey('statusText', `Table "${name}" — ${data.total} rows`);
+  } catch {}
 }

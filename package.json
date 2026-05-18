@@ -1,18 +1,15 @@
 {
   "name": "zrow",
   "private": true,
-  "version": "1.0.0",
-  "description": "Browser-based SQL database manager inspired by Beekeeper Studio",
+  "version": "2.0.0",
+  "description": "Browser-based SQLite browser — minimal, fast, works offline",
   "scripts": {
     "build": "bun scripts/build-docs.mjs",
-    "dev": "bunx tailwindcss -i src/styles.css -o dist/styles.css --watch & bun run server.js",
-    "serve": "bun run server.js",
-    "deploy": "node scripts/deploy.mjs",
-    "dev:basic": "bunx tailwindcss -i src/styles.css -o dist/styles.css --watch & bunx serve . -l 3000 -s"
+    "dev": "trap 'kill 0' EXIT; bunx tailwindcss -i src/styles.css -o dist/styles.css --watch & bun run server.js & wait",
+    "serve": "bun run server.js"
   },
   "devDependencies": {
     "esbuild": "^0.28.0",
-    "serve": "^14.2.4",
     "tailwindcss": "^3.4.17"
   },
   "dependencies": {

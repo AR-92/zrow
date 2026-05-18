@@ -37,9 +37,4 @@ export const I = {
   zap: () => icon('zap'),
 };
 
-export function refreshIcons(root) {
-  if (window.lucide) {
-    if (root) lucide.createIcons({ root });
-    else lucide.createIcons();
-  }
-}
+
