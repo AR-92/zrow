@@ -164,6 +164,30 @@
     margin: -2px -4px;
   }
 
+  .formula-cell {
+    position: relative;
+  }
+  .formula-result {
+    font-style: italic;
+  }
+  .formula-cell::before {
+    content: 'fx';
+    position: absolute;
+    left: 1px;
+    top: 1px;
+    font-size: 7px;
+    color: rgba(52, 211, 153, 0.3);
+    font-weight: 700;
+    font-family: monospace;
+  }
+  td.formula-cell {
+    padding-left: 14px !important;
+  }
+
+  .inline-add-row-input {
+    min-width: 60px;
+  }
+
   .fade-in { animation: fadeIn 0.15s ease-out; }
   @keyframes fadeIn {
     from { opacity: 0; transform: translateY(4px); }

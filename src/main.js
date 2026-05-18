@@ -455,8 +455,8 @@ function renderTableView(area, s) {
     render();
   });
 
-  delegate(area, '.btn-add-col-inline', 'click', () => showAddColumnModal(name));
-  delegate(area, '.btn-add-row-inline', 'click', () => showAddRowModal(name, info));
+  delegate(area, '.btn-add-col-inline', 'click', () => startInlineAddColumn(area, name, pkCol));
+  delegate(area, '.btn-add-row-inline', 'click', () => startInlineAddRow(area, name, info, pkCol));
   qs('#btn-add-col-panel')?.addEventListener('click', () => showAddColumnModal(name));
 
   delegate(area, '.btn-drop-col', async (e, el) => {
@@ -489,7 +489,10 @@ function setupInlineEditing(area, tableName, pkCol) {
     const tr = td.closest('tr');
     const tbody = tr?.closest('tbody');
     const isNull = td.querySelector('.text-gray-600.italic');
-    const rawValue = isNull ? '' : td.textContent;
+
+    // Use data-formula if present (shows formula text when editing)
+    const formula = td.dataset.formula;
+    const rawValue = formula || (isNull ? '' : td.textContent);
 
     td.innerHTML = `<input class="cell-edit-input w-full bg-gray-800 border border-blue-500/50 rounded px-1 py-0.5 text-xs text-gray-200 outline-none" value="${escapeHtml(rawValue)}" />`;
     const input = td.querySelector('input');
@@ -503,15 +506,22 @@ function setupInlineEditing(area, tableName, pkCol) {
       const updateData = {};
       updateData[col] = newVal;
 
-      td.innerHTML = newVal === null
-        ? '<span class="text-gray-600 italic">NULL</span>'
-        : escapeHtml(newVal);
+      if (newVal !== null && newVal.startsWith('=')) {
+        const rowData = getRowData(tr);
+        const computed = evalFormula(newVal, rowData);
+        td.innerHTML = `<span class="formula-result text-emerald-400">${escapeHtml(computed)}</span>`;
+        td.dataset.formula = newVal;
+        td.classList.add('formula-cell');
+      } else {
+        td.innerHTML = newVal === null
+          ? '<span class="text-gray-600 italic">NULL</span>'
+          : escapeHtml(newVal);
+        delete td.dataset.formula;
+        td.classList.remove('formula-cell');
+      }
       td.title = newVal ?? '';
 
-      // fire-and-forget save to database
-      updateRowByPk(tableName, updateData, pkCol, pkVal).then(r => {
-        store.setKey('recordCount', (store.get().recordCount || 0) + 1);
-      }).catch(() => {
+      updateRowByPk(tableName, updateData, pkCol, pkVal).catch(() => {
         td.innerHTML = escapeHtml(rawValue || 'NULL');
       });
     }
@@ -535,6 +545,22 @@ function setupInlineEditing(area, tableName, pkCol) {
         td.innerHTML = isNull ? '<span class="text-gray-600 italic">NULL</span>' : escapeHtml(rawValue);
       }
     });
+  }
+
+  function getRowData(tr) {
+    const data = {};
+    if (!tr) return data;
+    const tds = tr.querySelectorAll('td[data-col]');
+    for (const td of tds) {
+      const col = td.dataset.col;
+      const formula = td.dataset.formula;
+      if (formula) data[col] = formula;
+      else {
+        const isNull = td.querySelector('.text-gray-600.italic');
+        data[col] = isNull ? null : td.textContent;
+      }
+    }
+    return data;
   }
 
   function moveTo(td, dir) {
@@ -649,6 +675,135 @@ function setupTableSort(area, tableName) {
     reloadTable().then(() => render());
   });
 }
+
+// ── Formula Evaluation ────────────────────────
+function evalFormula(expr, row) {
+  if (!expr || !expr.startsWith('=')) return expr;
+  try {
+    const clean = expr.slice(1).trim();
+    if (!clean) return '';
+    const keys = Object.keys(row);
+    const vals = keys.map(k => row[k]);
+    const fn = new Function(...keys, `try { return (${clean}) } catch(e) { return '#ERR:' + e.message; }`);
+    const result = fn(...vals);
+    return result === undefined || result === null ? '' : String(result);
+  } catch (e) {
+    return '#ERROR';
+  }
+}
+
+// ── Inline Add Row ─────────────────────────────
+function startInlineAddRow(area, tableName, info, pkCol) {
+  if (!info?.columns) return;
+  const tr = qs('#add-row-placeholder');
+  if (!tr) return;
+  const cols = info.columns;
+  const formCols = cols.filter(c => !c.primaryKey || c.defaultValue === null);
+
+  tr.classList.remove('btn-add-row-inline', 'cursor-pointer');
+  tr.innerHTML = '';
+  for (const c of cols) {
+    const isPk = c.primaryKey;
+    const isForm = formCols.includes(c);
+    if (isPk && c.defaultValue == null) {
+      tr.appendChild(createElement('td', { className: 'text-gray-600 text-xs px-3 py-1' }, 'PK'));
+    } else {
+      const input = createElement('input', {
+        className: 'inline-add-row-input w-full text-xs px-1.5 py-1 rounded border border-gray-700 bg-gray-800/80 text-gray-200 outline-none focus:border-blue-500/40',
+        placeholder: c.type,
+        dataset: { col: c.name },
+      });
+      if (c.defaultValue != null) input.value = String(c.defaultValue);
+      const td = createElement('td', { className: 'px-1 py-1' });
+      td.appendChild(input);
+      tr.appendChild(td);
+    }
+  }
+
+  const actionTd = createElement('td', { className: 'text-center px-1 py-1' });
+  actionTd.innerHTML = `
+    <button class="btn-inline-save-row p-0.5 rounded hover:bg-emerald-500/20 hover:text-emerald-400 text-emerald-500 transition-colors" title="Save"><i data-lucide="check" class="w-3.5 h-3.5"></i></button>
+    <button class="btn-inline-cancel-row p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-gray-500 transition-colors" title="Cancel"><i data-lucide="x" class="w-3.5 h-3.5"></i></button>
+  `;
+  tr.appendChild(actionTd);
+  refreshIcons(tr);
+
+  const firstInput = tr.querySelector('input');
+  if (firstInput) setTimeout(() => firstInput.focus(), 50);
+
+  delegate(tr, '.btn-inline-save-row', 'click', async () => {
+    const data = {};
+    for (const input of qsa('.inline-add-row-input', tr)) {
+      const val = input.value.trim();
+      data[input.dataset.col] = val === '' ? null : val;
+    }
+    await insertRow(tableName, data);
+    render();
+  });
+
+  delegate(tr, '.btn-inline-cancel-row', 'click', () => render());
+
+  tr.querySelectorAll('.inline-add-row-input').forEach(inp => {
+    inp.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        const saveBtn = tr.querySelector('.btn-inline-save-row');
+        if (saveBtn) saveBtn.click();
+      }
+      if (e.key === 'Escape') {
+        const cancelBtn = tr.querySelector('.btn-inline-cancel-row');
+        if (cancelBtn) cancelBtn.click();
+      }
+    });
+  });
+}
+
+// ── Inline Add Column ──────────────────────────
+function startInlineAddColumn(area, tableName, pkCol) {
+  const plusTh = area.querySelector('.btn-add-col-inline')?.closest('th');
+  if (!plusTh) return;
+
+  plusTh.innerHTML = `
+    <div class="flex items-center gap-0.5">
+      <input id="inline-col-name" class="w-16 text-[10px] px-1 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-200 outline-none focus:border-blue-500/40" placeholder="name" autofocus />
+      <select id="inline-col-type" class="w-14 text-[10px] px-1 py-0.5 rounded border border-gray-700 bg-gray-800 text-gray-200 outline-none">
+        <option value="TEXT">TEXT</option>
+        <option value="INTEGER">INT</option>
+        <option value="REAL">REAL</option>
+      </select>
+      <button class="btn-inline-save-col p-0.5 rounded hover:bg-emerald-500/20 hover:text-emerald-400 text-emerald-500 transition-colors" title="Save"><i data-lucide="check" class="w-3 h-3"></i></button>
+      <button class="btn-inline-cancel-col p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-gray-500 transition-colors" title="Cancel"><i data-lucide="x" class="w-3 h-3"></i></button>
+    </div>
+  `;
+  refreshIcons(plusTh);
+
+  const nameInput = qs('#inline-col-name');
+  if (nameInput) setTimeout(() => nameInput.focus(), 50);
+
+  delegate(plusTh, '.btn-inline-save-col', 'click', async () => {
+    const name = qs('#inline-col-name')?.value?.trim();
+    const type = qs('#inline-col-type')?.value || 'TEXT';
+    if (!name) return;
+    await addColumn(tableName, { name, type, defaultValue: null, notNull: false });
+    render();
+  });
+
+  delegate(plusTh, '.btn-inline-cancel-col', 'click', () => render());
+
+  if (nameInput) {
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        qs('.btn-inline-save-col')?.click();
+      }
+      if (e.key === 'Escape') {
+        qs('.btn-inline-cancel-col')?.click();
+      }
+    });
+  }
+}
+
+// ── Data Table (with filters, sort, formulas) ─
 function buildDataTable(data, withToolbar, pkCol, filters, sort) {
   const cols = data.columns || [];
   const rows = data.rows || [];
@@ -700,11 +855,20 @@ function buildDataTable(data, withToolbar, pkCol, filters, sort) {
     for (const c of cols) {
       const colName = c.name || c;
       const v = row[colName];
-      let cell;
-      if (v == null) cell = `<span class="text-gray-600 italic">NULL</span>`;
-      else if (typeof v === 'object') cell = `<span title="${escapeHtml(String(v))}">${escapeHtml(JSON.stringify(v))}</span>`;
-      else cell = escapeHtml(String(v));
-      html += `<td data-col="${colName}" title="${escapeHtml(String(v ?? ''))}" class="cursor-pointer hover:bg-blue-500/5 transition-colors">${cell}</td>`;
+      let cell, isFormula = false, formulaAttr = '';
+      if (v != null && typeof v === 'string' && v.startsWith('=')) {
+        isFormula = true;
+        const computed = evalFormula(v, row);
+        formulaAttr = ` data-formula="${escapeHtml(v)}"`;
+        cell = `<span class="formula-result text-emerald-400">${escapeHtml(computed)}</span>`;
+      } else if (v == null) {
+        cell = `<span class="text-gray-600 italic">NULL</span>`;
+      } else if (typeof v === 'object') {
+        cell = `<span title="${escapeHtml(String(v))}">${escapeHtml(JSON.stringify(v))}</span>`;
+      } else {
+        cell = escapeHtml(String(v));
+      }
+      html += `<td data-col="${colName}"${formulaAttr} title="${escapeHtml(String(v ?? ''))}" class="cursor-pointer hover:bg-blue-500/5 transition-colors${isFormula ? ' formula-cell' : ''}">${cell}</td>`;
     }
     html += `<td class="text-center add-cell"></td>`;
     if (pkCol) {
@@ -712,7 +876,7 @@ function buildDataTable(data, withToolbar, pkCol, filters, sort) {
     }
     html += `</tr>`;
   }
-  html += `<tr class="btn-add-row-inline cursor-pointer hover:bg-blue-500/5 transition-colors"><td colspan="${colCount + 1}" class="text-center py-2 text-gray-600 hover:text-blue-400 text-xs"><span class="flex items-center justify-center gap-1"><i data-lucide="plus" class="w-3.5 h-3.5"></i> Add Row</span></td></tr>`;
+  html += `<tr class="btn-add-row-inline cursor-pointer hover:bg-blue-500/5 transition-colors" id="add-row-placeholder"><td colspan="${colCount + 1}" class="text-center py-2 text-gray-600 hover:text-blue-400 text-xs"><span class="flex items-center justify-center gap-1"><i data-lucide="plus" class="w-3.5 h-3.5"></i> Add Row</span></td></tr>`;
   html += `</tbody></table></div>`;
   return html;
 }
