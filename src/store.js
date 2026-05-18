@@ -29,6 +29,8 @@ const initialState = {
   recordCount: null,
   tableFilters: {},
   tableSort: null,
+  sidebarCollapsed: JSON.parse(localStorage.getItem('zrow_sidebar_collapsed') || 'false'),
+  schemaPanelCollapsed: false,
 };
 
 export const store = createStore(initialState);
@@ -113,6 +115,14 @@ export const actions = {
   setTableFilters(f) { store.setKey('tableFilters', f); },
   setTableSort(s) { store.setKey('tableSort', s); },
   clearTableFilters() { store.setKey('tableFilters', {}); },
+  toggleSidebar() {
+    const val = !store.get().sidebarCollapsed;
+    store.setKey('sidebarCollapsed', val);
+    localStorage.setItem('zrow_sidebar_collapsed', JSON.stringify(val));
+  },
+  toggleSchemaPanel() {
+    store.setKey('schemaPanelCollapsed', !store.get().schemaPanelCollapsed);
+  },
 };
 
 export function getActiveTab() {

@@ -24,11 +24,31 @@ function render() {
   refreshIcons();
 }
 
+// ── Sidebar Toggle ────────────────────────────
+document.addEventListener('DOMContentLoaded', () => {
+  qs('#sidebar-toggle')?.addEventListener('click', () => {
+    const { toggleSidebar } = actions;
+    toggleSidebar();
+    render();
+  });
+});
+
 // ── Sidebar ────────────────────────────────────
 function renderSidebar() {
   const el = qs('#sidebar');
-  clear(el);
   const s = store.get();
+  const collapsed = s.sidebarCollapsed;
+  el.style.width = collapsed ? '0px' : '224px';
+  el.classList.toggle('border-r-0', collapsed);
+
+  // Update toggle icon
+  const toggle = qs('#sidebar-toggle');
+  if (toggle) {
+    toggle.innerHTML = `<i data-lucide="${collapsed ? 'panel-left-open' : 'panel-left-close'}" class="w-3 h-3"></i>`;
+    refreshIcons(toggle);
+  }
+
+  clear(el);
   const { connections, activeConnectionId, tables, currentTable } = s;
 
   el.innerHTML = `
@@ -401,6 +421,7 @@ function renderTableView(area, s) {
   }
 
   const pkCol = info?.columns?.find(c => c.primaryKey)?.name || null;
+  const schemaCollapsed = s.schemaPanelCollapsed;
 
   const colHtml = info?.columns?.map((c, i) =>
     `<div class="flex items-center gap-2 px-3 py-1.5 text-xs border-b border-gray-800/30 hover:bg-gray-800/20 group">
@@ -428,18 +449,25 @@ function renderTableView(area, s) {
         <div class="flex-1 flex flex-col overflow-hidden">
           ${buildDataTable({ columns: data.columns, rows: data.rows }, true, pkCol, s.tableFilters, s.tableSort)}
         </div>
-        ${info ? `<div class="w-56 shrink-0 border-l border-gray-800/60 bg-gray-900/30 overflow-y-auto hidden md:block">
-          <div class="flex items-center justify-between px-3 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800/60">
+        ${info ? `<div id="schema-panel" class="shrink-0 border-l border-gray-800/60 bg-gray-900/30 overflow-hidden transition-all duration-200 ${schemaCollapsed ? 'w-0 border-l-0' : 'w-56 hidden md:block'}">
+          <div class="flex items-center justify-between px-3 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800/60 ${schemaCollapsed ? 'hidden' : ''}">
             <span>Columns</span>
-            <button id="btn-add-col-panel" class="p-0.5 rounded hover:bg-gray-700/50 hover:text-gray-400 transition-colors" title="Add Column">
-              <i data-lucide="plus" class="w-3 h-3"></i>
-            </button>
+            <div class="flex items-center gap-1">
+              <button id="btn-add-col-panel" class="p-0.5 rounded hover:bg-gray-700/50 hover:text-gray-400 transition-colors" title="Add Column">
+                <i data-lucide="plus" class="w-3 h-3"></i>
+              </button>
+              <button id="btn-toggle-schema" class="p-0.5 rounded hover:bg-gray-700/50 hover:text-gray-400 transition-colors" title="Collapse">
+                <i data-lucide="chevron-right" class="w-3 h-3"></i>
+              </button>
+            </div>
           </div>
-          ${colHtml}
+          ${schemaCollapsed ? '' : `<div class="overflow-y-auto">${colHtml}
           ${info.indexes?.length ? `<div class="px-3 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800/60 mt-2">Indexes</div>
           ${info.indexes.map(i => `<div class="px-3 py-1 text-xs text-gray-400">${i.name} ${i.unique ? '(unique)' : ''}</div>`).join('')}` : ''}
           ${info.foreignKeys?.length ? `<div class="px-3 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800/60 mt-2">Foreign Keys</div>
           ${info.foreignKeys.map(f => `<div class="px-3 py-1 text-xs text-gray-400">${f.column} → ${f.refTable}(${f.refColumn})</div>`).join('')}` : ''}
+          </div>`}
+          ${schemaCollapsed ? `<div class="flex items-center justify-center h-full cursor-pointer hover:bg-gray-800/30 transition-colors" id="btn-expand-schema" title="Show columns"><i data-lucide="chevron-left" class="w-4 h-4 text-gray-600"></i></div>` : ''}
         </div>` : ''}
       </div>
     </div>
@@ -458,6 +486,14 @@ function renderTableView(area, s) {
   delegate(area, '.btn-add-col-inline', 'click', () => startInlineAddColumn(area, name, pkCol));
   delegate(area, '.btn-add-row-inline', 'click', () => startInlineAddRow(area, name, info, pkCol));
   qs('#btn-add-col-panel')?.addEventListener('click', () => showAddColumnModal(name));
+  qs('#btn-toggle-schema')?.addEventListener('click', () => {
+    actions.toggleSchemaPanel();
+    render();
+  });
+  qs('#btn-expand-schema')?.addEventListener('click', () => {
+    actions.toggleSchemaPanel();
+    render();
+  });
 
   delegate(area, '.btn-drop-col', async (e, el) => {
     const colName = el.dataset.col;
