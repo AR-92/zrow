@@ -420,17 +420,9 @@ function renderTableView(area, s) {
         <i data-lucide="table" class="w-4 h-4 text-blue-400"></i>
         <span class="text-sm font-medium text-gray-200">${escapeHtml(name)}</span>
         <span class="text-xs text-gray-500">${data.total || 0} rows</span>
-        <div class="ml-auto flex items-center gap-1">
-          <button id="btn-add-row" class="px-2 py-1 text-xs rounded-md bg-emerald-600/20 text-emerald-400 hover:bg-emerald-600/30 transition-colors flex items-center gap-1">
-            <i data-lucide="plus" class="w-3 h-3"></i> Add Row
-          </button>
-          <button id="btn-add-col" class="px-2 py-1 text-xs rounded-md bg-blue-600/20 text-blue-400 hover:bg-blue-600/30 transition-colors flex items-center gap-1">
-            <i data-lucide="columns" class="w-3 h-3"></i> Add Column
-          </button>
-          <button id="btn-query-table" class="px-2 py-1 text-xs rounded-md bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 transition-colors flex items-center gap-1">
-            <i data-lucide="terminal" class="w-3 h-3"></i> Query
-          </button>
-        </div>
+        <button id="btn-query-table" class="ml-auto px-2 py-1 text-xs rounded-md bg-purple-600/20 text-purple-400 hover:bg-purple-600/30 transition-colors flex items-center gap-1">
+          <i data-lucide="terminal" class="w-3 h-3"></i> Query
+        </button>
       </div>
       <div class="flex flex-1 overflow-hidden">
         <div class="flex-1 flex flex-col overflow-hidden">
@@ -463,8 +455,8 @@ function renderTableView(area, s) {
     render();
   });
 
-  qs('#btn-add-row')?.addEventListener('click', () => showAddRowModal(name, info));
-  qs('#btn-add-col')?.addEventListener('click', () => showAddColumnModal(name));
+  delegate(area, '.btn-add-col-inline', 'click', () => showAddColumnModal(name));
+  delegate(area, '.btn-add-row-inline', 'click', () => showAddRowModal(name, info));
   qs('#btn-add-col-panel')?.addEventListener('click', () => showAddColumnModal(name));
 
   delegate(area, '.btn-drop-col', async (e, el) => {
@@ -479,7 +471,7 @@ function renderTableView(area, s) {
   setupRowDeletion(area, name, pkCol);
 }
 
-// ── Inline Cell Editing ────────────────────────
+// ── Inline Cell Editing (Excel-like) ──────────
 function setupInlineEditing(area, tableName, pkCol) {
   delegate(area, '.result-table td[data-col]', 'dblclick', (e, td) => {
     if (td.querySelector('input, select, textarea')) return;
@@ -488,27 +480,89 @@ function setupInlineEditing(area, tableName, pkCol) {
     const pkVal = tr?.dataset?.pkVal;
     if (!pkCol || !pkVal || col === pkCol) return;
 
-    const current = td.textContent;
-    const isNull = td.querySelector('.text-gray-600.italic');
+    enterEditMode(td, col, pkVal, tableName);
+  });
 
-    td.innerHTML = `<input class="cell-edit-input w-full bg-gray-800 border border-blue-500/50 rounded px-1 py-0.5 text-xs text-gray-200 outline-none" value="${isNull ? '' : escapeHtml(current)}" />`;
+  function enterEditMode(td, col, pkVal, tableName) {
+    const tr = td.closest('tr');
+    const tbody = tr?.closest('tbody');
+    const isNull = td.querySelector('.text-gray-600.italic');
+    const rawValue = isNull ? '' : td.textContent;
+
+    td.innerHTML = `<input class="cell-edit-input w-full bg-gray-800 border border-blue-500/50 rounded px-1 py-0.5 text-xs text-gray-200 outline-none" value="${escapeHtml(rawValue)}" />`;
     const input = td.querySelector('input');
     input.focus();
     input.select();
 
     function save() {
       const val = input.value;
+      const trimmed = val.trim();
+      const newVal = trimmed === '' ? null : trimmed;
       const updateData = {};
-      updateData[col] = val === '' ? null : val;
-      updateRowByPk(tableName, updateData, pkCol, pkVal).then(() => render());
+      updateData[col] = newVal;
+
+      td.innerHTML = newVal === null
+        ? '<span class="text-gray-600 italic">NULL</span>'
+        : escapeHtml(newVal);
+      td.title = newVal ?? '';
+
+      // fire-and-forget save to database
+      updateRowByPk(tableName, updateData, pkCol, pkVal).then(r => {
+        store.setKey('recordCount', (store.get().recordCount || 0) + 1);
+      }).catch(() => {
+        td.innerHTML = escapeHtml(rawValue || 'NULL');
+      });
     }
 
     input.addEventListener('blur', save);
     input.addEventListener('keydown', (ev) => {
-      if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
-      if (ev.key === 'Escape') { ev.preventDefault(); render(); }
+      if (ev.key === 'Enter') {
+        ev.preventDefault();
+        input.blur();
+        moveTo(td, 'down');
+      } else if (ev.key === 'Tab' && !ev.shiftKey) {
+        ev.preventDefault();
+        input.blur();
+        moveTo(td, 'right');
+      } else if (ev.key === 'Tab' && ev.shiftKey) {
+        ev.preventDefault();
+        input.blur();
+        moveTo(td, 'left');
+      } else if (ev.key === 'Escape') {
+        ev.preventDefault();
+        td.innerHTML = isNull ? '<span class="text-gray-600 italic">NULL</span>' : escapeHtml(rawValue);
+      }
     });
-  });
+  }
+
+  function moveTo(td, dir) {
+    const tr = td.closest('tr');
+    const tbody = tr?.closest('tbody');
+    if (!tbody || !tr) return;
+    const allTds = [...tr.querySelectorAll('td[data-col]')];
+    const idx = allTds.indexOf(td);
+
+    let targetTd = null;
+    if (dir === 'right' && idx < allTds.length - 1) {
+      targetTd = allTds[idx + 1];
+    } else if (dir === 'left' && idx > 0) {
+      targetTd = allTds[idx - 1];
+    } else if (dir === 'down' || (dir === 'right' && idx >= allTds.length - 1)) {
+      const nextTr = tr.nextElementSibling;
+      if (nextTr && nextTr.tagName === 'TR' && !nextTr.classList.contains('btn-add-row-inline')) {
+        const nextTds = [...nextTr.querySelectorAll('td[data-col]')];
+        targetTd = nextTds[Math.min(idx, nextTds.length - 1)];
+      }
+    }
+
+    if (targetTd && !targetTd.querySelector('input')) {
+      const col = targetTd.dataset.col;
+      const pkVal = targetTd.closest('tr')?.dataset?.pkVal;
+      if (pkCol && pkVal && col !== pkCol) {
+        enterEditMode(targetTd, col, pkVal, tableName);
+      }
+    }
+  }
 }
 
 function setupRowDeletion(area, tableName, pkCol) {
@@ -542,8 +596,10 @@ function buildDataTable(data, withToolbar, pkCol) {
     </div>`;
   }
 
+  const colCount = cols.length + (pkCol ? 1 : 0);
+
   html += `<div class="flex-1 overflow-auto"><table class="result-table">`;
-  html += `<thead><tr>${cols.map(c => `<th>${c.name || c}</th>`).join('')}${pkCol ? '<th class="w-8"></th>' : ''}</tr></thead>`;
+  html += `<thead><tr>${cols.map(c => `<th>${c.name || c}</th>`).join('')}<th class="w-9 px-1"><button class="btn-add-col-inline flex items-center justify-center w-full h-full p-0.5 rounded hover:bg-blue-500/20 hover:text-blue-400 transition-colors text-gray-600" title="Add column"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></th>${pkCol ? '<th class="w-8"></th>' : ''}</tr></thead>`;
   html += `<tbody>`;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
@@ -558,11 +614,13 @@ function buildDataTable(data, withToolbar, pkCol) {
       else cell = escapeHtml(String(v));
       html += `<td data-col="${colName}" title="${escapeHtml(String(v ?? ''))}" class="cursor-pointer hover:bg-blue-500/5 transition-colors">${cell}</td>`;
     }
+    html += `<td class="text-center add-cell"></td>`;
     if (pkCol) {
       html += `<td class="text-center"><button class="btn-del-row p-0.5 rounded hover:bg-red-500/20 hover:text-red-400 text-gray-600 transition-colors" data-pk-val="${pkVal != null ? escapeHtml(String(pkVal)) : ''}" title="Delete row"><i data-lucide="trash-2" class="w-3 h-3"></i></button></td>`;
     }
     html += `</tr>`;
   }
+  html += `<tr class="btn-add-row-inline cursor-pointer hover:bg-blue-500/5 transition-colors"><td colspan="${colCount + 1}" class="text-center py-2 text-gray-600 hover:text-blue-400 text-xs"><span class="flex items-center justify-center gap-1"><i data-lucide="plus" class="w-3.5 h-3.5"></i> Add Row</span></td></tr>`;
   html += `</tbody></table></div>`;
   return html;
 }
