@@ -128,6 +128,61 @@ export class SQLite {
     this.exec(`DELETE FROM "${table}" WHERE id = ${typeof id === 'string' && isNaN(Number(id)) ? `'${id}'` : id}`);
   }
 
+  updateRowByPk(table, data, pkCol, pkVal) {
+    const sets = Object.entries(data)
+      .filter(([k]) => k !== pkCol)
+      .map(([k, v]) => `"${k}" = ${v === null ? 'NULL' : typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : v}`)
+      .join(', ');
+    if (!sets) return;
+    this.exec(`UPDATE "${table}" SET ${sets} WHERE "${pkCol}" = ${typeof pkVal === 'string' && isNaN(Number(pkVal)) ? `'${pkVal.replace(/'/g, "''")}'` : pkVal}`);
+  }
+
+  deleteRowByPk(table, pkCol, pkVal) {
+    this.exec(`DELETE FROM "${table}" WHERE "${pkCol}" = ${typeof pkVal === 'string' && isNaN(Number(pkVal)) ? `'${pkVal.replace(/'/g, "''")}'` : pkVal}`);
+  }
+
+  insertRow(table, data) {
+    const cols = Object.keys(data).map(k => `"${k}"`);
+    const vals = Object.values(data).map(v =>
+      v === null || v === undefined ? 'NULL' : typeof v === 'string' ? `'${v.replace(/'/g, "''")}'` : v
+    );
+    this.exec(`INSERT INTO "${table}" (${cols.join(', ')}) VALUES (${vals.join(', ')})`);
+  }
+
+  createTable(name, columns) {
+    const colDefs = columns.map(c => {
+      let def = `"${c.name}" ${c.type}`;
+      if (c.primaryKey) def += ' PRIMARY KEY';
+      if (c.autoIncrement) def += ' AUTOINCREMENT';
+      if (c.notNull) def += ' NOT NULL';
+      if (c.defaultValue != null && c.defaultValue !== '')
+        def += ` DEFAULT ${typeof c.defaultValue === 'string' ? `'${c.defaultValue}'` : c.defaultValue}`;
+      if (c.unique) def += ' UNIQUE';
+      return def;
+    });
+    this.exec(`CREATE TABLE "${name}" (${colDefs.join(', ')})`);
+  }
+
+  dropTable(name) {
+    this.exec(`DROP TABLE IF EXISTS "${name}"`);
+  }
+
+  addColumn(table, columnDef) {
+    let def = `"${columnDef.name}" ${columnDef.type}`;
+    if (columnDef.notNull) def += ' NOT NULL';
+    if (columnDef.defaultValue != null && columnDef.defaultValue !== '')
+      def += ` DEFAULT ${typeof columnDef.defaultValue === 'string' ? `'${columnDef.defaultValue}'` : columnDef.defaultValue}`;
+    this.exec(`ALTER TABLE "${table}" ADD COLUMN ${def}`);
+  }
+
+  dropColumn(table, name) {
+    this.exec(`ALTER TABLE "${table}" DROP COLUMN "${name}"`);
+  }
+
+  renameTable(oldName, newName) {
+    this.exec(`ALTER TABLE "${oldName}" RENAME TO "${newName}"`);
+  }
+
   getTableInfo(name) {
     const cols = this._db.exec(`PRAGMA table_info("${name}")`);
     const indexes = this._db.exec(`PRAGMA index_list("${name}")`);

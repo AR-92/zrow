@@ -174,3 +174,82 @@ export async function browseTable(name) {
     store.setKey('statusText', `Table "${name}" — ${data.total} rows`);
   } catch {}
 }
+
+function refreshCurrentTable() {
+  const { currentTable } = store.get();
+  if (currentTable) browseTable(currentTable);
+}
+
+function refreshTables() {
+  if (_db) {
+    store.setKey('tables', _db.getTables());
+  }
+}
+
+export async function insertRow(table, data) {
+  if (!_db) return;
+  _db.insertRow(table, data);
+  store.setKey('statusText', `Row inserted into "${table}"`);
+  refreshCurrentTable();
+  refreshTables();
+}
+
+export async function updateRowByPk(table, data, pkCol, pkVal) {
+  if (!_db) return;
+  _db.updateRowByPk(table, data, pkCol, pkVal);
+  store.setKey('statusText', `Row updated in "${table}"`);
+  refreshCurrentTable();
+}
+
+export async function deleteRowByPk(table, pkCol, pkVal) {
+  if (!_db) return;
+  _db.deleteRowByPk(table, pkCol, pkVal);
+  store.setKey('statusText', `Row deleted from "${table}"`);
+  refreshCurrentTable();
+  refreshTables();
+}
+
+export async function createTable(name, columns) {
+  if (!_db) return;
+  _db.createTable(name, columns);
+  store.setKey('statusText', `Table "${name}" created`);
+  refreshTables();
+}
+
+export async function dropTable(name) {
+  if (!_db) return;
+  _db.dropTable(name);
+  if (store.get().currentTable === name) {
+    store.setKey('currentTable', null);
+    store.setKey('currentTableData', null);
+    store.setKey('currentTableInfo', null);
+  }
+  store.setKey('statusText', `Table "${name}" dropped`);
+  refreshTables();
+}
+
+export async function addColumn(table, columnDef) {
+  if (!_db) return;
+  _db.addColumn(table, columnDef);
+  store.setKey('statusText', `Column "${columnDef.name}" added to "${table}"`);
+  refreshCurrentTable();
+  refreshTables();
+}
+
+export async function dropColumn(table, name) {
+  if (!_db) return;
+  _db.dropColumn(table, name);
+  store.setKey('statusText', `Column "${name}" dropped from "${table}"`);
+  refreshCurrentTable();
+  refreshTables();
+}
+
+export async function renameTable(oldName, newName) {
+  if (!_db) return;
+  _db.renameTable(oldName, newName);
+  if (store.get().currentTable === oldName) {
+    store.setKey('currentTable', newName);
+  }
+  store.setKey('statusText', `Table renamed to "${newName}"`);
+  refreshTables();
+}
