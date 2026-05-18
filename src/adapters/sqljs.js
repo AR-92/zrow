@@ -99,10 +99,31 @@ export class SQLite {
     });
   }
 
-  getTableData(name, { limit = 200, offset = 0 } = {}) {
+  _escapeId(id) { return `"${id.replace(/"/g, '""')}"`; }
+  _escapeLike(v) { return v.replace(/'/g, "''").replace(/%/g, '\\%').replace(/_/g, '\\_'); }
+
+  getTableData(name, { limit = 200, offset = 0, filters = {}, sort = null } = {}) {
     try {
-      const r = this._db.exec(`SELECT * FROM "${name}" LIMIT ${limit} OFFSET ${offset}`);
-      const cr = this._db.exec(`SELECT COUNT(*) as cnt FROM "${name}"`);
+      let where = '';
+      const conds = [];
+      for (const [col, val] of Object.entries(filters)) {
+        if (val === '' || val == null) continue;
+        const cid = this._escapeId(col);
+        if (val === '__NULL__') conds.push(`${cid} IS NULL`);
+        else if (val === '__NOTNULL__') conds.push(`${cid} IS NOT NULL`);
+        else conds.push(`${cid} LIKE '%${this._escapeLike(val)}%' ESCAPE '\\'`);
+      }
+      if (conds.length) where = ' WHERE ' + conds.join(' AND ');
+
+      let orderBy = '';
+      if (sort && sort.column) {
+        const dir = sort.direction === 'desc' ? 'DESC' : 'ASC';
+        orderBy = ` ORDER BY ${this._escapeId(sort.column)} ${dir}`;
+      }
+
+      const sql = `SELECT * FROM ${this._escapeId(name)}${where}${orderBy} LIMIT ${limit} OFFSET ${offset}`;
+      const r = this._db.exec(sql);
+      const cr = this._db.exec(`SELECT COUNT(*) as cnt FROM ${this._escapeId(name)}${where}`);
       const total = cr.length ? cr[0].values[0][0] : 0;
       if (!r.length) return { columns: [], rows: [], total: 0 };
       const columns = r[0].columns.map(c => ({ name: c, type: 'text' }));

@@ -27,6 +27,8 @@ const initialState = {
   currentTableInfo: null,
   sidebarView: 'tables',
   recordCount: null,
+  tableFilters: {},
+  tableSort: null,
 };
 
 export const store = createStore(initialState);
@@ -108,6 +110,9 @@ export const actions = {
   setCurrentTableInfo(i) { store.setKey('currentTableInfo', i); },
   setSidebarView(v) { store.setKey('sidebarView', v); },
   setRecordCount(n) { store.setKey('recordCount', n); },
+  setTableFilters(f) { store.setKey('tableFilters', f); },
+  setTableSort(s) { store.setKey('tableSort', s); },
+  clearTableFilters() { store.setKey('tableFilters', {}); },
 };
 
 export function getActiveTab() {
@@ -166,12 +171,34 @@ export async function executeQuery(sql) {
 export async function browseTable(name) {
   if (!_db) return;
   try {
-    const data = _db.getTableData(name);
-    const info = _db.getTableInfo(name);
     store.setKey('currentTable', name);
+    store.setKey('tableFilters', {});
+    store.setKey('tableSort', null);
+    const { tableFilters, tableSort } = store.get();
+    const data = _db.getTableData(name, { filters: tableFilters, sort: tableSort });
+    const info = _db.getTableInfo(name);
     store.setKey('currentTableData', data);
     store.setKey('currentTableInfo', info);
     store.setKey('statusText', `Table "${name}" — ${data.total} rows`);
+  } catch {}
+}
+
+export async function reloadTable() {
+  const { currentTable, tableFilters, tableSort } = store.get();
+  if (!currentTable || !_db) return;
+  const s = store.get();
+  const active = s.activeConnectionId;
+  if (!active) return;
+  try {
+    const data = _db.getTableData(currentTable, { filters: tableFilters, sort: tableSort });
+    const info = _db.getTableInfo(currentTable);
+    store.setKey('currentTableData', data);
+    store.setKey('currentTableInfo', info);
+    const fc = Object.values(tableFilters).filter(v => v && v !== '').length;
+    const parts = [`${data.total} rows`];
+    if (fc) parts.push(`${fc} filter${fc > 1 ? 's' : ''}`);
+    if (tableSort) parts.push(`sorted by ${tableSort.column}`);
+    store.setKey('statusText', `Table "${currentTable}" — ${parts.join(', ')}`);
   } catch {}
 }
 

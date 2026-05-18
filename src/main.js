@@ -1,4 +1,4 @@
-import { store, actions, connectToDatabase, executeQuery, browseTable, disconnectDatabase, insertRow, updateRowByPk, deleteRowByPk, createTable, dropTable, addColumn, dropColumn, renameTable, getDB } from './store.js';
+import { store, actions, connectToDatabase, executeQuery, browseTable, disconnectDatabase, insertRow, updateRowByPk, deleteRowByPk, createTable, dropTable, addColumn, dropColumn, renameTable, getDB, reloadTable } from './store.js';
 import { qs, qsa, delegate, createElement, clear, refreshIcons, escapeHtml } from './utils/dom.js';
 import { highlightSql, getLineNumbers } from './utils/sql-highlight.js';
 
@@ -426,7 +426,7 @@ function renderTableView(area, s) {
       </div>
       <div class="flex flex-1 overflow-hidden">
         <div class="flex-1 flex flex-col overflow-hidden">
-          ${buildDataTable({ columns: data.columns, rows: data.rows }, true, pkCol)}
+          ${buildDataTable({ columns: data.columns, rows: data.rows }, true, pkCol, s.tableFilters, s.tableSort)}
         </div>
         ${info ? `<div class="w-56 shrink-0 border-l border-gray-800/60 bg-gray-900/30 overflow-y-auto hidden md:block">
           <div class="flex items-center justify-between px-3 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800/60">
@@ -469,6 +469,8 @@ function renderTableView(area, s) {
 
   setupInlineEditing(area, name, pkCol, data);
   setupRowDeletion(area, name, pkCol);
+  setupTableFilters(area, name);
+  setupTableSort(area, name);
 }
 
 // ── Inline Cell Editing (Excel-like) ──────────
@@ -576,17 +578,93 @@ function setupRowDeletion(area, tableName, pkCol) {
   });
 }
 
-// ── Data Table ─────────────────────────────────
-function buildDataTable(data, withToolbar, pkCol) {
+// ── Table Filters ─────────────────────────────
+function setupTableFilters(area, tableName) {
+  const debounceTimers = {};
+  delegate(area, '.filter-input', 'input', (e, el) => {
+    const col = el.dataset.filterCol;
+    const val = el.value;
+    clearTimeout(debounceTimers[col]);
+    debounceTimers[col] = setTimeout(() => {
+      const s = store.get();
+      const filters = { ...s.tableFilters };
+      if (val) filters[col] = val;
+      else delete filters[col];
+      actions.setTableFilters(filters);
+      reloadTable().then(() => render());
+    }, 250);
+  });
+
+  delegate(area, '.filter-input', 'keydown', (e, el) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      clearTimeout(debounceTimers[el.dataset.filterCol]);
+      const s = store.get();
+      const filters = { ...s.tableFilters };
+      const val = el.value;
+      if (val) filters[el.dataset.filterCol] = val;
+      else delete filters[el.dataset.filterCol];
+      actions.setTableFilters(filters);
+      reloadTable().then(() => render());
+    }
+    if (e.key === 'Escape') {
+      el.value = '';
+      el.blur();
+      clearTimeout(debounceTimers[el.dataset.filterCol]);
+      const s = store.get();
+      const filters = { ...s.tableFilters };
+      delete filters[el.dataset.filterCol];
+      actions.setTableFilters(filters);
+      reloadTable().then(() => render());
+    }
+  });
+
+  delegate(area, '.btn-clear-filters', 'click', () => {
+    actions.setTableFilters({});
+    reloadTable().then(() => render());
+  });
+}
+
+// ── Table Sort ─────────────────────────────────
+function setupTableSort(area, tableName) {
+  delegate(area, '.sort-th', 'click', (e, el) => {
+    const col = el.dataset.sortCol;
+
+    // Stop if click was on the add-col button
+    if (e.target.closest('.btn-add-col-inline')) return;
+
+    const s = store.get();
+    const current = s.tableSort;
+    let next = null;
+
+    if (!current || current.column !== col) {
+      next = { column: col, direction: 'asc' };
+    } else if (current.direction === 'asc') {
+      next = { column: col, direction: 'desc' };
+    } else {
+      next = null;
+    }
+
+    actions.setTableSort(next);
+    reloadTable().then(() => render());
+  });
+}
+function buildDataTable(data, withToolbar, pkCol, filters, sort) {
   const cols = data.columns || [];
   const rows = data.rows || [];
+  filters = filters || {};
+  sort = sort || null;
   let html = '';
 
   if (withToolbar) {
+    const fc = Object.values(filters).filter(v => v && v !== '').length;
     html += `<div class="flex items-center gap-2 px-3 py-1 border-b border-gray-800/60 bg-gray-900/20 shrink-0 text-[11px]">
       <span class="text-gray-500">${rows.length} rows</span>
       <span class="text-gray-700">·</span>
       <span class="text-gray-500">${cols.length} cols</span>
+      ${fc ? `<button class="btn-clear-filters px-2 py-0.5 rounded hover:bg-gray-800 text-amber-400 hover:text-amber-300 flex items-center gap-1">
+        <i data-lucide="x" class="w-3 h-3"></i> Clear ${fc} filter${fc > 1 ? 's' : ''}
+      </button>` : ''}
       <button class="ml-auto px-2 py-0.5 rounded hover:bg-gray-800 text-gray-500 hover:text-gray-300 flex items-center gap-1" onclick="window.exportJSON()">
         <i data-lucide="download" class="w-3 h-3"></i> JSON
       </button>
@@ -599,7 +677,21 @@ function buildDataTable(data, withToolbar, pkCol) {
   const colCount = cols.length + (pkCol ? 1 : 0);
 
   html += `<div class="flex-1 overflow-auto"><table class="result-table">`;
-  html += `<thead><tr>${cols.map(c => `<th>${c.name || c}</th>`).join('')}<th class="w-9 px-1"><button class="btn-add-col-inline flex items-center justify-center w-full h-full p-0.5 rounded hover:bg-blue-500/20 hover:text-blue-400 transition-colors text-gray-600" title="Add column"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></th>${pkCol ? '<th class="w-8"></th>' : ''}</tr></thead>`;
+  html += `<thead>`;
+  // Header row with sort
+  html += `<tr class="sort-row">${cols.map(c => {
+    const cn = c.name || c;
+    const isSort = sort && sort.column === cn;
+    const arrow = isSort ? (sort.direction === 'asc' ? '&#9650;' : '&#9660;') : '';
+    return `<th class="sort-th cursor-pointer select-none hover:text-gray-200 transition-colors" data-sort-col="${cn}">${cn} <span class="sort-arrow text-[10px] ${isSort ? 'text-blue-400' : 'text-transparent'}">${arrow || '&#9650;'}</span></th>`;
+  }).join('')}<th class="w-9 px-1"><button class="btn-add-col-inline flex items-center justify-center w-full h-full p-0.5 rounded hover:bg-blue-500/20 hover:text-blue-400 transition-colors text-gray-600" title="Add column"><i data-lucide="plus" class="w-3.5 h-3.5"></i></button></th>${pkCol ? '<th class="w-8"></th>' : ''}</tr>`;
+  // Filter row
+  html += `<tr class="filter-row">${cols.map(c => {
+    const cn = c.name || c;
+    const val = filters[cn] || '';
+    return `<td class="filter-td px-1 py-1"><input class="filter-input w-full text-[11px] px-1.5 py-1 rounded border border-gray-700/50 bg-gray-800/50 text-gray-300 outline-none placeholder-gray-600 focus:border-blue-500/40 focus:bg-gray-800 transition-all" data-filter-col="${cn}" value="${escapeHtml(val)}" placeholder="filter" /></td>`;
+  }).join('')}<td class="px-1"></td>${pkCol ? '<td class="w-8"></td>' : ''}</tr>`;
+  html += `</thead>`;
   html += `<tbody>`;
   for (let i = 0; i < rows.length; i++) {
     const row = rows[i];
