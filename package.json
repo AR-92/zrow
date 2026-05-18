@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "Browser-based SQL database manager inspired by Beekeeper Studio",
   "scripts": {
-    "build": "bunx tailwindcss -i src/styles.css -o dist/styles.css --minify && node scripts/build-docs.mjs",
+    "build": "bun scripts/build-docs.mjs",
     "dev": "bunx tailwindcss -i src/styles.css -o dist/styles.css --watch & bun run server.js",
     "serve": "bun run server.js",
     "deploy": "node scripts/deploy.mjs",
