@@ -2,6 +2,45 @@ import { store, actions, connectToDatabase, executeQuery, browseTable, disconnec
 import { qs, qsa, delegate, createElement, clear, refreshIcons, escapeHtml } from './utils/dom.js';
 import { highlightSql, getLineNumbers } from './utils/sql-highlight.js';
 
+// ── Resizable Panel Utility ──────────────────
+function makeResizable(handleId, targetId, direction, options = {}) {
+  const handle = document.getElementById(handleId);
+  const target = document.getElementById(targetId);
+  if (!handle || !target) return;
+  const { min = 60, max = Infinity, onResize } = options;
+  let startPos, startSize;
+
+  function onStart(e) {
+    e.preventDefault();
+    startPos = direction === 'h' ? e.clientX : e.clientY;
+    startSize = direction === 'h' ? target.offsetWidth : target.offsetHeight;
+    target.classList.add('no-transition');
+    document.body.style.cursor = direction === 'h' ? 'col-resize' : 'row-resize';
+    document.body.style.userSelect = 'none';
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }
+
+  function onMove(e) {
+    const delta = direction === 'h' ? e.clientX - startPos : e.clientY - startPos;
+    let newSize = startSize + delta;
+    newSize = Math.max(min, Math.min(max, newSize));
+    if (direction === 'h') target.style.width = newSize + 'px';
+    else target.style.height = newSize + 'px';
+  }
+
+  function onUp() {
+    target.classList.remove('no-transition');
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    document.removeEventListener('mousemove', onMove);
+    document.removeEventListener('mouseup', onUp);
+    if (onResize) onResize(direction === 'h' ? target.offsetWidth : target.offsetHeight);
+  }
+
+  handle.addEventListener('mousedown', onStart);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   const { theme } = store.get();
   document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -14,6 +53,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const si = qs('#status-icon');
     if (si) si.className = `w-2 h-2 rounded-full ${s.queryRunning ? 'bg-amber-400 animate-pulse' : s.activeConnectionId ? 'bg-emerald-400' : 'bg-gray-600'}`;
   });
+
+  // Sidebar toggle (click)
+  qs('#sidebar-toggle')?.addEventListener('click', () => {
+    actions.toggleSidebar();
+    render();
+  });
+
+  // Sidebar drag resize
+  makeResizable('sidebar-drag', 'sidebar', 'h', {
+    min: 120, max: 500,
+    onResize: (w) => actions.setSidebarWidth(w),
+  });
 });
 
 function render() {
@@ -24,21 +75,12 @@ function render() {
   refreshIcons();
 }
 
-// ── Sidebar Toggle ────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
-  qs('#sidebar-toggle')?.addEventListener('click', () => {
-    const { toggleSidebar } = actions;
-    toggleSidebar();
-    render();
-  });
-});
-
 // ── Sidebar ────────────────────────────────────
 function renderSidebar() {
   const el = qs('#sidebar');
   const s = store.get();
   const collapsed = s.sidebarCollapsed;
-  el.style.width = collapsed ? '0px' : '224px';
+  el.style.width = collapsed ? '0px' : s.sidebarWidth + 'px';
   el.classList.toggle('border-r-0', collapsed);
 
   // Update toggle icon
@@ -321,6 +363,7 @@ function renderContent() {
 // ── Editor ─────────────────────────────────────
 function renderEditor(area, tab) {
   const s = store.get();
+  const resHeight = s.resultsPanelHeight;
   area.innerHTML = `
     <div class="flex flex-col h-full">
       <div class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800/60 bg-gray-900/30 shrink-0">
@@ -335,8 +378,9 @@ function renderEditor(area, tab) {
         <pre class="editor-highlight" id="editor-highlight"></pre>
         <textarea class="editor-input" id="editor-input" spellcheck="false" autocomplete="off" placeholder="${s.activeConnectionId ? 'Enter SQL...' : 'Connect to a database first'}" ${!s.activeConnectionId ? 'disabled' : ''}>${tab.sql || ''}</textarea>
       </div>
+      <div id="results-drag" class="shrink-0 h-1 bg-transparent hover:bg-blue-500/30 cursor-row-resize transition-colors relative"></div>
+      <div id="results-panel" class="flex flex-col overflow-hidden border-t border-gray-800/60" style="height:${resHeight}px;min-height:60px;max-height:80%"></div>
     </div>
-    <div id="results-panel" class="flex flex-col overflow-hidden border-t border-gray-800/60" style="min-height:100px;max-height:50%"></div>
   `;
   refreshIcons(area);
 
@@ -368,6 +412,12 @@ function renderEditor(area, tab) {
     updateEditorStatus(store.get());
     renderResultsPanel(qs('#results-panel'));
   }, false);
+
+  // Results drag resize
+  makeResizable('results-drag', 'results-panel', 'v', {
+    min: 60, max: window.innerHeight * 0.8,
+    onResize: (h) => actions.setResultsPanelHeight(h),
+  });
 }
 
 function updateEditorStatus(s) {
@@ -449,7 +499,8 @@ function renderTableView(area, s) {
         <div class="flex-1 flex flex-col overflow-hidden">
           ${buildDataTable({ columns: data.columns, rows: data.rows }, true, pkCol, s.tableFilters, s.tableSort)}
         </div>
-        ${info ? `<div id="schema-panel" class="shrink-0 border-l border-gray-800/60 bg-gray-900/30 overflow-hidden transition-all duration-200 ${schemaCollapsed ? 'w-0 border-l-0' : 'w-56 hidden md:block'}">
+        ${info ? `<div id="schema-drag" class="shrink-0 w-1 bg-transparent hover:bg-blue-500/30 cursor-col-resize transition-colors ${schemaCollapsed ? 'hidden' : ''}"></div>
+        <div id="schema-panel" class="shrink-0 border-l border-gray-800/60 bg-gray-900/30 overflow-hidden transition-all duration-200 ${schemaCollapsed ? 'w-0 border-l-0' : 'hidden md:block'}" style="${schemaCollapsed ? '' : `width:${s.schemaPanelWidth}px`}">
           <div class="flex items-center justify-between px-3 py-2 text-[10px] text-gray-500 uppercase tracking-wider font-medium border-b border-gray-800/60 ${schemaCollapsed ? 'hidden' : ''}">
             <span>Columns</span>
             <div class="flex items-center gap-1">
@@ -494,6 +545,14 @@ function renderTableView(area, s) {
     actions.toggleSchemaPanel();
     render();
   });
+
+  // Schema panel drag resize
+  if (!schemaCollapsed) {
+    makeResizable('schema-drag', 'schema-panel', 'h', {
+      min: 120, max: 500,
+      onResize: (w) => actions.setSchemaPanelWidth(w),
+    });
+  }
 
   delegate(area, '.btn-drop-col', async (e, el) => {
     const colName = el.dataset.col;

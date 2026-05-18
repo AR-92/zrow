@@ -144,6 +144,10 @@
     opacity: 1;
   }
 
+  .no-transition, .no-transition * {
+    transition: none !important;
+  }
+
   .result-table tr.btn-add-row-inline td {
     border-bottom: 1px solid transparent;
   }

@@ -30,6 +30,9 @@ const initialState = {
   tableFilters: {},
   tableSort: null,
   sidebarCollapsed: JSON.parse(localStorage.getItem('zrow_sidebar_collapsed') || 'false'),
+  sidebarWidth: parseInt(localStorage.getItem('zrow_sidebar_width') || '224'),
+  schemaPanelWidth: 224,
+  resultsPanelHeight: 200,
   schemaPanelCollapsed: false,
 };
 
@@ -123,6 +126,9 @@ export const actions = {
   toggleSchemaPanel() {
     store.setKey('schemaPanelCollapsed', !store.get().schemaPanelCollapsed);
   },
+  setSidebarWidth(w) { store.setKey('sidebarWidth', w); localStorage.setItem('zrow_sidebar_width', String(w)); },
+  setSchemaPanelWidth(w) { store.setKey('schemaPanelWidth', w); },
+  setResultsPanelHeight(h) { store.setKey('resultsPanelHeight', h); },
 };
 
 export function getActiveTab() {
