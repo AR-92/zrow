@@ -1,0 +1,19 @@
+{
+  "name": "zrow",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Browser-based SQL database manager inspired by Beekeeper Studio",
+  "scripts": {
+    "build": "bunx tailwindcss -i src/styles.css -o dist/styles.css --minify",
+    "dev": "bunx tailwindcss -i src/styles.css -o dist/styles.css --watch & bun run server.js",
+    "serve": "bun run server.js",
+    "dev:basic": "bunx tailwindcss -i src/styles.css -o dist/styles.css --watch & bunx serve . -l 3000 -s"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.4.17",
+    "serve": "^14.2.4"
+  },
+  "dependencies": {
+    "sql.js": "^1.14.1"
+  }
+}
